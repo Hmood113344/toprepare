@@ -71,19 +71,6 @@ const PersonnelSchema = new mongoose.Schema({
     isBlocked: { type: Boolean, default: false },
     isDismissed: { type: Boolean, default: false },
     blockUntil: { type: Date, default: null },
-    // نفس تعريف التحذيرات/الإشعارات بموقع فلاش بالضبط — عشان نقدر نعرضها ونتعاهد عليها من هنا أيضًا
-    warnings: [{
-        kind: { type: String, enum: ["warning", "notice"], default: "warning" },
-        reason: String,
-        issuedBy: String, issuedByTag: String,
-        acknowledged: { type: Boolean, default: false },
-        acknowledgedAt: Date,
-        warningNumber: { type: Number, default: null },
-        pointsDeducted: { type: Number, default: 0 },
-        penaltyType: { type: String, default: null },
-        penaltyLabel: { type: String, default: null },
-        createdAt: { type: Date, default: Date.now },
-    }],
 }, { strict: false });
 const Personnel = mongoose.model("Personnel", PersonnelSchema);
 
@@ -305,36 +292,6 @@ app.post("/api/attendance/scan", ensureAuth, async (req, res) => {
     res.json({ success: true, status: newType, at: now });
 });
 
-// أقرب تحذير/إشعار على هذا العسكري لسّه ما اتعاهد عليه (نفس منطق فلاش، نفس المستند المشترك)
-app.get("/api/warnings/pending", async (req, res) => {
-    if (!req.isAuthenticated()) return res.json({ warning: null });
-    const p = await Personnel.findOne({ discord: req.user.id }, { warnings: 1 });
-    if (!p || !p.warnings || !p.warnings.length) return res.json({ warning: null });
-    const pending = p.warnings.filter(w => !w.acknowledged).sort((a, b) => a.createdAt - b.createdAt)[0];
-    if (!pending) return res.json({ warning: null });
-    res.json({ warning: {
-        id: pending._id, kind: pending.kind, reason: pending.reason, createdAt: pending.createdAt,
-        warningNumber: pending.warningNumber || null,
-        pointsDeducted: pending.pointsDeducted || 0,
-        penaltyLabel: pending.penaltyLabel || null,
-    } });
-});
-
-// اتعاهد وأقر بعدم تكرار ذلك — يحدّث نفس المستند المشترك مع فلاش
-app.post("/api/warnings/:id/ack", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "غير مسجّل دخول" });
-    const p = await Personnel.findOne({ discord: req.user.id });
-    if (!p) return res.status(404).json({ error: "غير موجود" });
-    const w = p.warnings.id(req.params.id);
-    if (!w) return res.status(404).json({ error: "غير موجود" });
-    if (!w.acknowledged) {
-        w.acknowledged = true;
-        w.acknowledgedAt = new Date();
-        await p.save();
-    }
-    res.json({ ok: true });
-});
-
 // ══════════════════════════════════════════════════════════════════════════
 // 6) API — لوحة كبار المسؤولين
 // ══════════════════════════════════════════════════════════════════════════
@@ -452,21 +409,7 @@ h1,h2,h3 { color:var(--gold-soft); }
 .login-box { text-align:center; padding-top:80px; }
 .login-box .logo { font-size:44px; margin-bottom:10px; }
 footer { text-align:center; padding:1.5rem; margin-top:2rem; border-top:1px solid var(--border); background:rgba(255,255,255,0.02); color:var(--muted); font-size:0.9rem; }
-
-/* ── تحذير / إشعار (شاشة كاملة) — نفس نظام فلاش ─────────────── */
-#warn-overlay { display:none; position:fixed; inset:0; z-index:3000; align-items:center; justify-content:center; flex-direction:column; gap:10px; padding:20px; text-align:center; }
-#warn-overlay.open { display:flex; }
-#warn-overlay.k-warning { background:radial-gradient(circle at center, #7a1a1a, #3d0d0d); }
-#warn-overlay.k-notice { background:radial-gradient(circle at center, #7a4a12, #3d2506); }
-.warn-box { border:2px dashed rgba(255,255,255,0.55); border-radius:10px; padding:26px 40px; max-width:480px; }
-.warn-title { font-size:30px; font-weight:bold; color:#fff; display:flex; align-items:center; justify-content:center; gap:10px; }
-.warn-title .tri { color:#f87171; }
-#warn-overlay.k-notice .warn-title .tri { color:#fbbf24; }
-.warn-line { border:none; border-top:1px solid rgba(255,255,255,0.5); margin:12px 0; }
-.warn-extra { color:#fde047; font-size:16px; font-weight:bold; margin-top:4px; }
-.warn-reason { color:#fff; font-size:19px; margin-top:8px; line-height:1.6; }
-.warn-ack-btn { margin-top:26px; background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.5); color:#fff; padding:12px 22px; border-radius:10px; font-family:inherit; font-size:14px; cursor:pointer; }
-.warn-ack-btn:hover { background:rgba(255,255,255,0.2); }
+#warn-banner { position:sticky; top:0; z-index:1000; width:100%; background:linear-gradient(90deg,#7f1d1d,#991b1b); color:#fecaca; text-align:center; padding:10px 14px; font-weight:bold; font-size:13px; box-shadow:0 2px 10px rgba(0,0,0,0.4); }
 
 /* رأس الصفحة الرئيسية */
 .profile-head { display:flex; align-items:center; gap:12px; }
@@ -513,16 +456,8 @@ footer { text-align:center; padding:1.5rem; margin-top:2rem; border-top:1px soli
 </style>
 </head>
 <body>
+<div id="warn-banner">⚠️ تنبيه: هذا الموقع مخصص للمحاكاة واللعب فقط، ولا يمت للواقع بصلة.</div>
 <div id="toast"></div>
-<div id="warn-overlay">
-    <div class="warn-box">
-        <div class="warn-title"><span class="tri">⚠️</span><span id="warn-title-text">تحذير</span><span class="tri">⚠️</span></div>
-        <hr class="warn-line">
-        <div class="warn-extra" id="warn-extra-text"></div>
-        <div class="warn-reason" id="warn-reason-text"></div>
-    </div>
-    <button class="warn-ack-btn" id="warn-ack-btn" onclick="ackCurrentWarning()">🤝 اتعاهد وأقر بعدم تكرار ذلك</button>
-</div>
 <div class="wrap" id="app"></div>
 <footer><p>جميع الحقوق محفوظة لوزارة الداخلية © 2026 | <span style="color:#d4af37;font-weight:bold;">${CONFIG.SITE_NAME}</span></p></footer>
 
@@ -566,40 +501,6 @@ async function init() {
     renderHome();
     setInterval(pollHome, 5000);
     setInterval(updateClock, 1000);
-    checkPendingWarning();
-    setInterval(checkPendingWarning, 5000);
-}
-
-// ── التحذيرات/الإشعارات الصادرة من موقع فلاش — تظهر هنا أيضًا لأنها نفس قاعدة البيانات ──
-let currentWarningId = null;
-async function checkPendingWarning() {
-    let data;
-    try { data = await api('/api/warnings/pending'); } catch (e) { return; }
-    const overlay = document.getElementById('warn-overlay');
-    if (!overlay) return;
-    const w = data.warning;
-    if (!w) { overlay.classList.remove('open'); currentWarningId = null; return; }
-    if (w.id === currentWarningId && overlay.classList.contains('open')) return; // نفس التحذير معروض حالياً
-    currentWarningId = w.id;
-    overlay.classList.remove('k-warning', 'k-notice');
-    overlay.classList.add(w.kind === 'warning' ? 'k-warning' : 'k-notice');
-    document.getElementById('warn-title-text').textContent = w.kind === 'warning' ? 'تحذير' : 'إشعار';
-    let extra = '';
-    if (w.warningNumber) extra += 'التحذير رقم ' + w.warningNumber + ' ';
-    if (w.pointsDeducted) extra += '(خصم ' + w.pointsDeducted + ' نقطة) ';
-    if (w.penaltyLabel) extra += '— العقوبة: ' + w.penaltyLabel;
-    document.getElementById('warn-extra-text').textContent = extra.trim();
-    document.getElementById('warn-reason-text').textContent = w.reason || '';
-    document.getElementById('warn-ack-btn').textContent = w.kind === 'warning' ? '🤝 اتعاهد وأقر بعدم تكرار ذلك' : '✅ تم الاطلاع';
-    overlay.classList.add('open');
-}
-async function ackCurrentWarning() {
-    if (!currentWarningId) return;
-    try {
-        await api('/api/warnings/' + currentWarningId + '/ack', { method: 'POST' });
-        document.getElementById('warn-overlay').classList.remove('open');
-        currentWarningId = null;
-    } catch (e) { toast(e.message); }
 }
 
 function renderLogin() {
