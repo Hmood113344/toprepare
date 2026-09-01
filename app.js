@@ -71,6 +71,19 @@ const PersonnelSchema = new mongoose.Schema({
     isBlocked: { type: Boolean, default: false },
     isDismissed: { type: Boolean, default: false },
     blockUntil: { type: Date, default: null },
+    // نفس تعريف التحذيرات/الإشعارات بموقع فلاش بالضبط — عشان نقدر نعرضها ونتعاهد عليها من هنا أيضًا
+    warnings: [{
+        kind: { type: String, enum: ["warning", "notice"], default: "warning" },
+        reason: String,
+        issuedBy: String, issuedByTag: String,
+        acknowledged: { type: Boolean, default: false },
+        acknowledgedAt: Date,
+        warningNumber: { type: Number, default: null },
+        pointsDeducted: { type: Number, default: 0 },
+        penaltyType: { type: String, default: null },
+        penaltyLabel: { type: String, default: null },
+        createdAt: { type: Date, default: Date.now },
+    }],
 }, { strict: false });
 const Personnel = mongoose.model("Personnel", PersonnelSchema);
 
@@ -292,6 +305,36 @@ app.post("/api/attendance/scan", ensureAuth, async (req, res) => {
     res.json({ success: true, status: newType, at: now });
 });
 
+// أقرب تحذير/إشعار على هذا العسكري لسّه ما اتعاهد عليه (نفس منطق فلاش، نفس المستند المشترك)
+app.get("/api/warnings/pending", async (req, res) => {
+    if (!req.isAuthenticated()) return res.json({ warning: null });
+    const p = await Personnel.findOne({ discord: req.user.id }, { warnings: 1 });
+    if (!p || !p.warnings || !p.warnings.length) return res.json({ warning: null });
+    const pending = p.warnings.filter(w => !w.acknowledged).sort((a, b) => a.createdAt - b.createdAt)[0];
+    if (!pending) return res.json({ warning: null });
+    res.json({ warning: {
+        id: pending._id, kind: pending.kind, reason: pending.reason, createdAt: pending.createdAt,
+        warningNumber: pending.warningNumber || null,
+        pointsDeducted: pending.pointsDeducted || 0,
+        penaltyLabel: pending.penaltyLabel || null,
+    } });
+});
+
+// اتعاهد وأقر بعدم تكرار ذلك — يحدّث نفس المستند المشترك مع فلاش
+app.post("/api/warnings/:id/ack", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: "غير مسجّل دخول" });
+    const p = await Personnel.findOne({ discord: req.user.id });
+    if (!p) return res.status(404).json({ error: "غير موجود" });
+    const w = p.warnings.id(req.params.id);
+    if (!w) return res.status(404).json({ error: "غير موجود" });
+    if (!w.acknowledged) {
+        w.acknowledged = true;
+        w.acknowledgedAt = new Date();
+        await p.save();
+    }
+    res.json({ ok: true });
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // 6) API — لوحة كبار المسؤولين
 // ══════════════════════════════════════════════════════════════════════════
@@ -403,9 +446,27 @@ h1,h2,h3 { color:var(--gold-soft); }
 .muted { color:var(--muted); }
 #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#0d1f3c; padding:10px 20px; border-radius:10px; border:1px solid var(--gold); z-index:999; display:none; }
 
-/* شعار الدخول */
+/* شعار الدخول — نفس تصميم موقع فلاش بالضبط */
+.login-screen { text-align:center; padding:4rem 2rem; }
+.login-screen h1 { font-size:3rem; color:#3b82f6; text-shadow:0 0 20px rgba(59,130,246,0.5); margin-bottom:10px; }
 .login-box { text-align:center; padding-top:80px; }
 .login-box .logo { font-size:44px; margin-bottom:10px; }
+footer { text-align:center; padding:1.5rem; margin-top:2rem; border-top:1px solid var(--border); background:rgba(255,255,255,0.02); color:var(--muted); font-size:0.9rem; }
+
+/* ── تحذير / إشعار (شاشة كاملة) — نفس نظام فلاش ─────────────── */
+#warn-overlay { display:none; position:fixed; inset:0; z-index:3000; align-items:center; justify-content:center; flex-direction:column; gap:10px; padding:20px; text-align:center; }
+#warn-overlay.open { display:flex; }
+#warn-overlay.k-warning { background:radial-gradient(circle at center, #7a1a1a, #3d0d0d); }
+#warn-overlay.k-notice { background:radial-gradient(circle at center, #7a4a12, #3d2506); }
+.warn-box { border:2px dashed rgba(255,255,255,0.55); border-radius:10px; padding:26px 40px; max-width:480px; }
+.warn-title { font-size:30px; font-weight:bold; color:#fff; display:flex; align-items:center; justify-content:center; gap:10px; }
+.warn-title .tri { color:#f87171; }
+#warn-overlay.k-notice .warn-title .tri { color:#fbbf24; }
+.warn-line { border:none; border-top:1px solid rgba(255,255,255,0.5); margin:12px 0; }
+.warn-extra { color:#fde047; font-size:16px; font-weight:bold; margin-top:4px; }
+.warn-reason { color:#fff; font-size:19px; margin-top:8px; line-height:1.6; }
+.warn-ack-btn { margin-top:26px; background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.5); color:#fff; padding:12px 22px; border-radius:10px; font-family:inherit; font-size:14px; cursor:pointer; }
+.warn-ack-btn:hover { background:rgba(255,255,255,0.2); }
 
 /* رأس الصفحة الرئيسية */
 .profile-head { display:flex; align-items:center; gap:12px; }
@@ -419,12 +480,14 @@ h1,h2,h3 { color:var(--gold-soft); }
 
 /* دائرة البصمة */
 .fp-wrap { display:flex; flex-direction:column; align-items:center; padding:20px 0 6px; user-select:none; }
-.fp-ring { position:relative; width:190px; height:190px; border-radius:50%; display:flex; align-items:center; justify-content:center; }
-.fp-ring .progress { position:absolute; inset:0; border-radius:50%; background: conic-gradient(var(--gold-soft) calc(var(--p,0)*1%), rgba(255,255,255,0.06) 0); transition:background 0.05s linear; }
-.fp-ring .inner { position:relative; width:158px; height:158px; border-radius:50%; background:#0c1a30; border:2px solid var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; cursor:pointer; transition:transform .15s; }
+.fp-ring { position:relative; width:190px; height:190px; }
+.fp-ring .fp-svg { position:absolute; inset:0; width:190px; height:190px; transform:rotate(-90deg); }
+.fp-ring .fp-track { fill:none; stroke:rgba(255,255,255,0.06); stroke-width:16; }
+.fp-ring .fp-bar { fill:none; stroke:var(--gold-soft); stroke-width:16; stroke-linecap:round; }
+.fp-ring .inner { position:absolute; inset:16px; width:158px; height:158px; border-radius:50%; background:#0c1a30; border:2px solid var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; cursor:pointer; transition:transform .15s; }
 .fp-ring .inner:active { transform:scale(0.97); }
 .fp-ring.scanning .inner { border-color:var(--gold-soft); }
-.fp-ring svg { width:64px; height:64px; stroke:var(--gold-soft); }
+.fp-ring .inner svg { width:64px; height:64px; stroke:var(--gold-soft); }
 .fp-timer { font-weight:900; font-size:17px; color:#fff; }
 .fp-hint { font-size:12px; color:var(--muted); margin-top:14px; }
 .fp-status { text-align:center; min-height:22px; font-size:13px; margin-top:8px; font-weight:700; }
@@ -451,7 +514,17 @@ h1,h2,h3 { color:var(--gold-soft); }
 </head>
 <body>
 <div id="toast"></div>
+<div id="warn-overlay">
+    <div class="warn-box">
+        <div class="warn-title"><span class="tri">⚠️</span><span id="warn-title-text">تحذير</span><span class="tri">⚠️</span></div>
+        <hr class="warn-line">
+        <div class="warn-extra" id="warn-extra-text"></div>
+        <div class="warn-reason" id="warn-reason-text"></div>
+    </div>
+    <button class="warn-ack-btn" id="warn-ack-btn" onclick="ackCurrentWarning()">🤝 اتعاهد وأقر بعدم تكرار ذلك</button>
+</div>
 <div class="wrap" id="app"></div>
+<footer><p>جميع الحقوق محفوظة لوزارة الداخلية © 2026 | <span style="color:#d4af37;font-weight:bold;">${CONFIG.SITE_NAME}</span></p></footer>
 
 <script>
 let ME = null;
@@ -493,24 +566,58 @@ async function init() {
     renderHome();
     setInterval(pollHome, 5000);
     setInterval(updateClock, 1000);
+    checkPendingWarning();
+    setInterval(checkPendingWarning, 5000);
+}
+
+// ── التحذيرات/الإشعارات الصادرة من موقع فلاش — تظهر هنا أيضًا لأنها نفس قاعدة البيانات ──
+let currentWarningId = null;
+async function checkPendingWarning() {
+    let data;
+    try { data = await api('/api/warnings/pending'); } catch (e) { return; }
+    const overlay = document.getElementById('warn-overlay');
+    if (!overlay) return;
+    const w = data.warning;
+    if (!w) { overlay.classList.remove('open'); currentWarningId = null; return; }
+    if (w.id === currentWarningId && overlay.classList.contains('open')) return; // نفس التحذير معروض حالياً
+    currentWarningId = w.id;
+    overlay.classList.remove('k-warning', 'k-notice');
+    overlay.classList.add(w.kind === 'warning' ? 'k-warning' : 'k-notice');
+    document.getElementById('warn-title-text').textContent = w.kind === 'warning' ? 'تحذير' : 'إشعار';
+    let extra = '';
+    if (w.warningNumber) extra += 'التحذير رقم ' + w.warningNumber + ' ';
+    if (w.pointsDeducted) extra += '(خصم ' + w.pointsDeducted + ' نقطة) ';
+    if (w.penaltyLabel) extra += '— العقوبة: ' + w.penaltyLabel;
+    document.getElementById('warn-extra-text').textContent = extra.trim();
+    document.getElementById('warn-reason-text').textContent = w.reason || '';
+    document.getElementById('warn-ack-btn').textContent = w.kind === 'warning' ? '🤝 اتعاهد وأقر بعدم تكرار ذلك' : '✅ تم الاطلاع';
+    overlay.classList.add('open');
+}
+async function ackCurrentWarning() {
+    if (!currentWarningId) return;
+    try {
+        await api('/api/warnings/' + currentWarningId + '/ack', { method: 'POST' });
+        document.getElementById('warn-overlay').classList.remove('open');
+        currentWarningId = null;
+    } catch (e) { toast(e.message); }
 }
 
 function renderLogin() {
     document.getElementById('app').innerHTML = \`
-        <div class="login-box">
-            <div class="logo">🪪</div>
+        <div class="login-screen">
             <h1>${CONFIG.SITE_NAME}</h1>
-            <p class="muted" style="margin:10px 0 26px;">نظام تحضير وانصراف عسكري بالبصمة — مرتبط بموقع فلاش</p>
-            <a class="btn" href="/auth/discord">تسجيل دخول بالديسكورد</a>
+            <p style="color:var(--muted);margin-bottom:28px;">نظام تحضير وانصراف عسكري بالبصمة لمنسوبي الجهات العسكرية</p>
+            <a href="/auth/discord" style="display:inline-flex;align-items:center;justify-content:center;gap:10px;background:#5865F2;color:#fff;font-weight:bold;font-size:16px;padding:16px 34px;border-radius:10px;text-decoration:none;box-shadow:0 6px 18px rgba(88,101,242,0.4);">
+                <span>🔒</span><span>تسجيل الدخول عبر ديسكورد</span>
+            </a>
         </div>\`;
 }
 function renderBlocked(data) {
     document.getElementById('app').innerHTML = \`
-        <div class="login-box">
-            <div class="logo">\${data.maintenance ? '🚨' : '🚫'}</div>
-            <h2>غير متاح حالياً</h2>
-            <p class="muted" style="margin-top:10px;">\${data.reason}</p>
-            <a class="btn gray" style="margin-top:20px;" href="/auth/logout">خروج</a>
+        <div class="card center" style="margin-top:60px;">
+            <h2 style="color:#fca5a5;">\${data.maintenance ? '🚨' : '🚫'} غير متاح حالياً</h2>
+            <p style="color:var(--muted);margin-top:10px;">\${data.reason}</p>
+            <a class="btn gray" style="margin-top:16px;" href="/auth/logout">تسجيل خروج</a>
         </div>\`;
 }
 
@@ -534,7 +641,10 @@ function renderHome() {
             <div class="mecca-clock">نظام تبصيم — بتوقيت مكة المكرمة<br><b id="mecca-time">--:--:--</b></div>
             <div class="fp-wrap">
                 <div class="fp-ring" id="fp-ring">
-                    <div class="progress" id="fp-progress" style="--p:0;"></div>
+                    <svg class="fp-svg" viewBox="0 0 190 190">
+                        <circle class="fp-track" cx="95" cy="95" r="87"/>
+                        <circle class="fp-bar" id="fp-bar" cx="95" cy="95" r="87"/>
+                    </svg>
                     <div class="inner" id="fp-inner">
                         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round">
                             <path d="M12 11c1 0 2 .8 2 2.2 0 2-1 3.5-1 5"/>
@@ -590,9 +700,18 @@ async function pollHome() {
 }
 
 // ── منطق الضغط باستمرار على البصمة (3 ثواني) ──
+// ملاحظة: الحلقة الآن دائرة SVG (stroke-dashoffset) بدل conic-gradient —
+// الطريقة القديمة كانت تتصادم مع CSS transition وتسبب تشوّه/تكبّر بصري أثناء الضغط ببعض المتصفحات (خصوصًا سفاري بالآيفون)
+const FP_R = 87;
+const FP_CIRC = 2 * Math.PI * FP_R;
 function bindFingerprint() {
     const inner = document.getElementById('fp-inner');
+    const bar = document.getElementById('fp-bar');
     if (!inner) return;
+    if (bar) {
+        bar.style.strokeDasharray = FP_CIRC.toFixed(2);
+        bar.style.strokeDashoffset = FP_CIRC.toFixed(2);
+    }
     inner.addEventListener('pointerdown', startHold);
     inner.addEventListener('pointerup', cancelHold);
     inner.addEventListener('pointerleave', cancelHold);
@@ -610,11 +729,11 @@ function tickHold() {
     const total = ${CONFIG.HOLD_SECONDS} * 1000;
     const elapsed = Date.now() - holdStart;
     const remaining = Math.max(0, total - elapsed);
-    const pct = Math.min(100, (elapsed / total) * 100);
-    const ring = document.getElementById('fp-progress');
+    const pct = Math.min(1, elapsed / total);
+    const bar = document.getElementById('fp-bar');
     const timer = document.getElementById('fp-timer');
-    if (!ring || !timer) return;
-    ring.style.setProperty('--p', pct.toFixed(1));
+    if (!bar || !timer) return;
+    bar.style.strokeDashoffset = (FP_CIRC * (1 - pct)).toFixed(2);
     timer.textContent = (remaining / 1000).toFixed(1) + ' ث';
     if (elapsed >= total) { doScan(); return; }
     holdTimer = requestAnimationFrame(tickHold);
@@ -623,15 +742,16 @@ function cancelHold() {
     if (scanning) return;
     cancelAnimationFrame(holdTimer);
     holdStart = 0;
-    const ring = document.getElementById('fp-progress');
+    const bar = document.getElementById('fp-bar');
     const timer = document.getElementById('fp-timer');
-    if (ring) ring.style.setProperty('--p', 0);
+    if (bar) bar.style.strokeDashoffset = FP_CIRC.toFixed(2);
     if (timer) timer.textContent = 'اضغط باستمرار';
 }
 async function doScan() {
     cancelAnimationFrame(holdTimer);
     scanning = true;
     const ringEl = document.getElementById('fp-ring');
+    const bar = document.getElementById('fp-bar');
     const timer = document.getElementById('fp-timer');
     const statusEl = document.getElementById('fp-status');
     if (ringEl) ringEl.classList.add('scanning');
@@ -654,7 +774,7 @@ async function doScan() {
         statusEl.className = 'fp-status fail';
     }
     if (ringEl) ringEl.classList.remove('scanning');
-    document.getElementById('fp-progress').style.setProperty('--p', 0);
+    if (bar) bar.style.strokeDashoffset = FP_CIRC.toFixed(2);
     if (timer) timer.textContent = 'اضغط باستمرار';
     scanning = false;
 }
