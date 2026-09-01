@@ -422,16 +422,16 @@ footer { text-align:center; padding:1.5rem; margin-top:2rem; border-top:1px soli
 .mecca-clock b { color:var(--gold-soft); font-size:15px; }
 
 /* دائرة البصمة */
-.fp-wrap { display:flex; flex-direction:column; align-items:center; padding:20px 0 6px; user-select:none; }
+.fp-wrap { display:flex; flex-direction:column; align-items:center; padding:20px 0 6px; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; touch-action:manipulation; }
 .fp-ring { position:relative; width:190px; height:190px; }
 .fp-ring .fp-svg { position:absolute; inset:0; width:190px; height:190px; transform:rotate(-90deg); }
 .fp-ring .fp-track { fill:none; stroke:rgba(255,255,255,0.06); stroke-width:16; }
 .fp-ring .fp-bar { fill:none; stroke:var(--gold-soft); stroke-width:16; stroke-linecap:round; }
-.fp-ring .inner { position:absolute; inset:16px; width:158px; height:158px; border-radius:50%; background:#0c1a30; border:2px solid var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; cursor:pointer; transition:transform .15s; }
+.fp-ring .inner { position:absolute; inset:16px; width:158px; height:158px; border-radius:50%; background:#0c1a30; border:2px solid var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; cursor:pointer; transition:transform .15s; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; -webkit-user-drag:none; touch-action:none; }
 .fp-ring .inner:active { transform:scale(0.97); }
 .fp-ring.scanning .inner { border-color:var(--gold-soft); }
-.fp-ring .inner svg { width:64px; height:64px; stroke:var(--gold-soft); }
-.fp-timer { font-weight:900; font-size:17px; color:#fff; }
+.fp-ring .inner svg { width:64px; height:64px; stroke:var(--gold-soft); pointer-events:none; -webkit-touch-callout:none; }
+.fp-timer { font-weight:900; font-size:17px; color:#fff; pointer-events:none; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
 .fp-hint { font-size:12px; color:var(--muted); margin-top:14px; }
 .fp-status { text-align:center; min-height:22px; font-size:13px; margin-top:8px; font-weight:700; }
 .fp-status.ok { color:var(--ok); }
@@ -617,6 +617,9 @@ function bindFingerprint() {
     inner.addEventListener('pointerup', cancelHold);
     inner.addEventListener('pointerleave', cancelHold);
     inner.addEventListener('pointercancel', cancelHold);
+    // يمنع قائمة/عدسة تكبير آيفون عند الضغط المطوّل (هذا كان سبب "التكبّر" أثناء الضغط على البصمة)
+    inner.addEventListener('contextmenu', e => e.preventDefault());
+    inner.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
 }
 function startHold(e) {
     e.preventDefault();
